@@ -1,0 +1,144 @@
+---
+title: 'PML Project: Weight Lifting Activity Recognition'
+author: "WeiXiang Lim"
+date: "January 31, 2016"
+output: html_document
+---
+
+
+
+## Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participant They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The five ways are exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Only Class A corresponds to correct performance. The goal of this project is to predict the manner in which they did the exercise, i.e., Class A to E. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+
+## Prepare the R environment
+Set the working directory using `setwd()` function. In order to make the report reproducible, the seed was set 12345 globally.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+# Clear the workspace
+rm(list=ls())
+
+# Set working directory
+setwd("C:/Users/Weixiang/Google Drive/coursera/Working/pml_assignment")
+
+# Load library
+library(caret)
+library(rattle)
+
+# Set seed
+set.seed(12345)
+```
+
+
+
+## Data Processing
+Train (`pml-training.csv`) and test (`pml-testing.csv`) data were stored in two excel files on Amazon's cloudfront. They were dowloaded and loaded into R.
+```{r}
+# download the files
+url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(url=url1, destfile = "C:/Users/Weixiang/Google Drive/coursera/Working/pml_assignment/pml-training.csv")
+url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url=url2, destfile = "C:/Users/Weixiang/Google Drive/coursera/Working/pml_assignment/pml-testing.csv")
+
+# read the csv file 
+data_training <- read.csv("C:/Users/Weixiang/Google Drive/coursera/Working/pml_assignment/pml-training.csv", na.strings= c("NA",""," "))
+data_testing <- read.csv("C:/Users/Weixiang/Google Drive/coursera/Working/pml_assignment/pml-testing.csv", na.strings= c("NA",""," "))
+
+# classes as a factor
+data_training$classe <- as.factor(data_training$classe)
+```
+
+The above train data set is partitioned into train(60%) and validation(40%) data sets. The train data set is used to build the model whereas the validation data set is used to generate the `out of sample error` and select the best model.
+```{r}
+# data partition
+inTrain <- createDataPartition(y = data_training$classe, p = 0.6, list = FALSE)
+training <- data_training[inTrain, ]
+validation <- data_training[-inTrain, ]
+```
+
+There are 11,776 observations and 160 variables in the training data set.  By `summary(training)`, there are 100 variables with more than 90% of its values are NAs. 60 variables without NA values are being remained. The first seven columns that containing merely individuals' identifiers and timestamps are omitted. Near-zero-variance variables have only little meaning during prediction. There are no near-zero-variables.
+```{r, eval=FALSE}
+# data exploration
+str(training)
+summary(training)
+```
+```{r}
+# remove NAs
+training_NAs <- apply(training, 2, function(x) {sum(is.na(x))})
+training_NApct <- 100 * round(training_NAs/nrow(training),3)
+dt <- as.data.frame(table(training_NApct))
+names(dt) <- c("Percent of NAs (%)","N of Variables")
+knitr::kable(dt,format='markdown',caption="Variable Pattern: Percent of NAs")
+training_clean <- training[,which(training_NAs == 0)]
+
+# remove non relevant variable
+training_clean <- training_clean[,8:ncol(training_clean)]
+
+# remove near-zero-variance variables
+nzv <- nearZeroVar(training_clean,saveMetrics=TRUE)
+training_clean <- training_clean[,nzv$nzv==FALSE]
+```
+
+There are 7,846 and 20 observations in the validation and testing data set respectively. Both data sets have the exactly same variables with the training data set. The same treatments in training data set have to be applied on both validation and testing data set.
+
+```{r, eval=FALSE}
+# data exploration
+str(validation)
+str(data_testing)
+```
+```{r}
+# same treatment as training data set
+validation_clean <- validation[,which(names(validation) %in% names(training_clean))]
+data_testing_clean <- data_testing[,which(names(data_testing) %in% names(training_clean))]
+```
+
+
+
+## Prediction Algorithms
+Classification trees and random forests are used to predict the outcome in this analysis. Here we consider 5-fold cross validation (default setting in trainControl function is 10) when implementing the algorithm to save a little computing time.
+```{r}
+control <- trainControl(method = "cv", number = 5)
+```
+
+### Classification tree
+First, we built the model using classification tree.
+```{r}
+# build classification tree
+fit_rpart <- train(classe ~ ., data = training_clean, method = "rpart", trControl = control)
+print(fit_rpart, digits = 4)
+fancyRpartPlot(fit_rpart$finalModel)
+
+# predict validation set
+predict_rpart <- predict(fit_rpart, validation_clean)
+# accuracy
+(conf_rpart <- confusionMatrix(validation_clean$classe, predict_rpart))
+```
+
+From the confusion matrix, the accuracy rate is **`r format( conf_rpart$overall[1],digits = 3)`**. Classification tree does not predict the outcome `classe` very well.
+
+### Random forest
+The second prediction algorithm being used is random forest.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+# build random forest
+fit_rf <- train(classe ~ ., data = training_clean, method = "rf", trControl = control)
+print(fit_rf, digits = 4)
+
+# predict validation set
+predict_rf <- predict(fit_rf, validation_clean)
+# accuracy
+(conf_rf <- confusionMatrix(validation_clean$classe, predict_rf))
+```
+
+From the out of sample error, random forest method is way better than classification tree method. The accuracy rate is **`r format( conf_rf$overall[1],digits = 3)`** for random forest algorithm. This leads to high accuracy, although this algorithm is sometimes difficult to interpret and computationally inefficient.
+
+
+
+## Prediction on Test Set
+The better model random forest is used to predict the outcome variable `classe` for the testing set.
+```{r}
+(predict(fit_rf, data_testing_clean))
+```
+
+
